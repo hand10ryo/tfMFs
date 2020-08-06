@@ -57,7 +57,7 @@ class PointwiseMF(tf.keras.layers.Layer):
             self.r_hats = tf.reduce_sum(tf.matmul(self.u_embed, tf.transpose(self.i_embed)), 1)
             return self.r_hats
 
-    def get_user_embeddigns(self, users):
+    def get_user_embeddings(self, users):
         """ This is a function that returns user embeddings
 
         Args:
@@ -69,7 +69,7 @@ class PointwiseMF(tf.keras.layers.Layer):
         u_embed = tf.nn.embedding_lookup(self.user_embeddings, users)
         return u_embed.numpy()
 
-    def get_item_embeddigns(self, items):
+    def get_item_embeddings(self, items):
         """ This is a function that returns item embeddings
 
         Args:
@@ -82,9 +82,10 @@ class PointwiseMF(tf.keras.layers.Layer):
         return i_embed.numpy()
 
 
-class NaiveMF(tf.keras.Model):
+class AbstractMF(tf.keras.Model):
     def __init__(self, data, num_users, num_items, dim, **kwargs):
-        """ Simples matrix factorization model optimized by Adam.
+        """ Simplest matrix factorization model. This is a abstract class.
+            You can build a MF model by inheritance of this class.
 
         Args:
             data ([ndarray]): matrix whose columns are [user_id, item_id, rating].
@@ -92,7 +93,7 @@ class NaiveMF(tf.keras.Model):
             num_items ([int]): num of items.
             dim ([int]): a dim of latent space.
         """
-        super(NaiveMF, self).__init__(**kwargs)
+        super(AbstractMF, self).__init__(**kwargs)
         self.num_users = num_users
         self.num_items = num_items
         self.num_dsample = data.shape[0]
@@ -148,6 +149,41 @@ class NaiveMF(tf.keras.Model):
         r_hats = self.PointwiseMF(users, items)
         return r_hats
 
+    def fit(self):
+        pass
+
+    def transform_prob(self, users, items):
+        r_hats = self.PointwiseMF(users, items)
+        r_hats_prob = tf.math.sigmoid(r_hats)
+        return r_hats_prob.numpy()
+
+    def get_user_embeddings(self, users):
+        return self.PointwiseMF.get_user_embeddings(users)
+
+    def get_item_embeddings(self, items):
+        return self.PointwiseMF.get_item_embeddings(items)
+
+    def get_user_embeddings_all(self):
+        users = np.arange(self.num_users)
+        return self.PointwiseMF.get_user_embeddings(users)
+
+    def get_item_embeddings_all(self, items):
+        items = np.arange(self.num_items)
+        return self.PointwiseMF.get_item_embeddigns(items)
+
+
+class BinaryMF(AbstractMF):
+    def __init__(self, data, num_users, num_items, dim, **kwargs):
+        """ Simplest binary matrix factorization model.
+
+        Args:
+            data ([ndarray]): matrix whose columns are [user_id, item_id, rating].
+            num_users ([int]): num of users/
+            num_items ([int]): num of items.
+            dim ([int]): a dim of latent space.
+        """
+        super(BinaryMF, self).__init__(data, num_users, num_items, dim, **kwargs)
+
     def fit(self, max_iter=10, lr=1.0e-4, n_batch=256, verbose=False, verbose_freq=50):
         """ This is a function to run training.
 
@@ -176,28 +212,9 @@ class NaiveMF(tf.keras.Model):
             indices = np.random.choice(np.arange(self.num_dsample), n_batch)
             users = self.users[indices].astype(int)
             items = self.items[indices].astype(int)
-            ratings = self.rate[indices]
+            ratings = self.ratings[indices]
             train_step(users, items, ratings)
             if verbose and (i % verbose_freq == 0):
                 print(f"iter {i} loss : {train_loss.result().numpy()}")
 
         print(f"iter {i} loss : {train_loss.result().numpy()}")
-
-    def transfrom_prob(self, users, items):
-        r_hats = self.PointwiseMF(users, items)
-        r_hats_prob = tf.math.sigmoid(r_hats)
-        return r_hats_prob.numpy()
-
-    def get_user_embeddings(self, users):
-        return self.PointwiseMF.get_user_embeddings(users)
-
-    def get_item_embeddings(self, items):
-        return self.PointwiseMF.get_item_embeddings(items)
-
-    def get_user_embeddings_all(self):
-        users = np.arange(self.num_user)
-        return self.PointwiseMF.get_user_embeddings(users)
-
-    def get_item_embeddings_all(self, items):
-        items = np.arange(self.num_item)
-        return self.PointwiseMF.get_item_embeddigns(items)
