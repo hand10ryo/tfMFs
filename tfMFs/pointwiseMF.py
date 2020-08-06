@@ -97,10 +97,10 @@ class NaiveMF(tf.keras.Model):
         self.num_items = num_items
         self.num_dsample = data.shape[0]
         self.dim = dim
-        self.row = data[:, 0]
-        self.col = data[:, 1]
-        self.rate = data[:, 2]
-        self.R = csr_matrix((self.rate, (self.row, self.col)), shape=(self.num_users, self.num_items))
+        self.users = data[:, 0]
+        self.items = data[:, 1]
+        self.ratings = data[:, 2]
+        self.R = csr_matrix((self.ratings, (self.users, self.items)), shape=(self.num_users, self.num_items))
         self.U_init, self.V_init = self.svd_init(self.R, self.dim)
 
         self.PointwiseMF = PointwiseMF(num_users, num_items, dim, self.U_init, self.V_init.T)
@@ -174,10 +174,10 @@ class NaiveMF(tf.keras.Model):
 
         for i in range(max_iter):
             indices = np.random.choice(np.arange(self.num_dsample), n_batch)
-            users = self.row[indices].astype(int)
-            movies = self.col[indices].astype(int)
+            users = self.users[indices].astype(int)
+            items = self.items[indices].astype(int)
             ratings = self.rate[indices]
-            train_step(users, movies, ratings)
+            train_step(users, items, ratings)
             if verbose and (i % verbose_freq == 0):
                 print(f"iter {i} loss : {train_loss.result().numpy()}")
 
