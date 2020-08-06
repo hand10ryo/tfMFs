@@ -1,7 +1,7 @@
-import tensorflow as tf
 import numpy as np
-from sklearn.utils.extmath import randomized_svd
+import tensorflow as tf
 from scipy.sparse import csr_matrix
+from sklearn.utils.extmath import randomized_svd
 
 
 class PointwiseMF(tf.keras.layers.Layer):
