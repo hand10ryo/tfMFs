@@ -5,7 +5,18 @@ from scipy.sparse import csr_matrix
 
 
 class PointwiseMF(tf.keras.layers.Layer):
+    """ This class is Custom Layer for PointwiseMF
+    """
     def __init__(self, num_users, num_items, dim, U_init, V_init, **kwargs):
+        """ initialize layer
+
+        Args:
+            num_users (int): num of users
+            num_items (int): num of items
+            dim (int): dimention of latent space
+            U_init (matrix): matrix for initializing user embeddings
+            V_init (matrix): matrix for initializing user embeddings
+        """
         super(PointwiseMF, self).__init__(**kwargs)
         self.num_users = num_users
         self.num_items = num_items
@@ -15,6 +26,7 @@ class PointwiseMF(tf.keras.layers.Layer):
         self.build()
 
     def build(self):
+        """ build variables """
         self.user_embeddings = tf.Variable(
             self.U_init,
             name='user_embeddings',
@@ -30,6 +42,15 @@ class PointwiseMF(tf.keras.layers.Layer):
         super(PointwiseMF, self).build(None)
 
     def call(self, users, items):
+        """ call function that returns rating from user_id amd item_id
+
+        Args:
+            users (ndarray): array of user_id
+            items (ndarray): array of itemid
+
+        Returns:
+            r_hats : a estimated values of rating (or relevance)
+        """
         with tf.name_scope('pointwise'):
             self.u_embed = tf.nn.embedding_lookup(self.user_embeddings, users)
             self.i_embed = tf.nn.embedding_lookup(self.item_embeddings, items)
@@ -37,10 +58,26 @@ class PointwiseMF(tf.keras.layers.Layer):
             return self.r_hats
 
     def get_user_embeddigns(self, users):
+        """ This is a function that returns user embeddings
+
+        Args:
+            users (ndarray): array of user_id
+
+        Returns:
+            u_embed (ndarray): numpy array of user embeddings
+        """
         u_embed = tf.nn.embedding_lookup(self.user_embeddings, users)
         return u_embed.numpy()
 
     def get_item_embeddigns(self, items):
+        """ This is a function that returns item embeddings
+
+        Args:
+            items (ndarray): array of item id
+
+        Returns:
+            i_embed (ndarray): numpy array of item embeddings
+        """
         i_embed = tf.nn.embedding_lookup(self.item_embeddings, items)
         return i_embed.numpy()
 
@@ -69,6 +106,16 @@ class NaiveMF(tf.keras.Model):
         self.PointwiseMF = PointwiseMF(num_users, num_items, dim, self.U_init, self.V_init.T)
 
     def svd_init(self, M, dim):
+        """ A function to intialize user and item embeddings by SVD.
+
+        Args:
+            M (matrix): matrix to decompose
+            dim (int): a dim of latent space.
+
+        Returns:
+            A : left matrix.
+            B : rithg matrix.
+        """
         U, S, V = randomized_svd(M, dim)
         U_padded = np.zeros((U.shape[0], dim))
         U_padded[:, :U.shape[1]] = U
@@ -89,10 +136,28 @@ class NaiveMF(tf.keras.Model):
         return A, B
 
     def call(self, users, items):
+        """ This is a call function that returns rating from user_id amd item_id
+
+        Args:
+            users (ndarray): array of user_id
+            items (ndarray): array of itemid
+
+        Returns:
+            r_hats (ndarray): a estimated values of rating (or relevance)
+        """
         r_hats = self.PointwiseMF(users, items)
         return r_hats
 
     def fit(self, max_iter=10, lr=1.0e-4, n_batch=256, verbose=False, verbose_freq=50):
+        """ This is a function to run training.
+
+        Args:
+            max_iter (int, optional): max iteration. Defaults to 10.
+            lr (float, optional): learning rate. Defaults to 1.0e-4.
+            n_batch (int, optional): batch size. Defaults to 256.
+            verbose (bool, optional): whether displaying loss or not. Defaults to False.
+            verbose_freq (int, optional): frequency of displaying loss. Defaults to 50.
+        """
         optimizer = tf.optimizers.Adam(lr)
         train_loss = tf.keras.metrics.Mean()
         bce = tf.keras.losses.BinaryCrossentropy()
@@ -117,10 +182,6 @@ class NaiveMF(tf.keras.Model):
                 print(f"iter {i} loss : {train_loss.result().numpy()}")
 
         print(f"iter {i} loss : {train_loss.result().numpy()}")
-
-    def transfrom(self, users, items):
-        r_hats = self.PointwiseMF(users, items)
-        return r_hats.numpy()
 
     def transfrom_prob(self, users, items):
         r_hats = self.PointwiseMF(users, items)
