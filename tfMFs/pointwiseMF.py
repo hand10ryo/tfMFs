@@ -218,3 +218,70 @@ class BinaryMF(AbstractMF):
                 print(f"iter {i} loss : {train_loss.result().numpy()}")
 
         print(f"iter {i} loss : {train_loss.result().numpy()}")
+
+
+class RelLoss(tf.keras.losses.Loss):
+    def __init__(self, pscore, name="rel_loss", **kwargs):
+        self.pscore = tf.convert_to_tensor(pscore, dtype=tf.float32)
+        super(RelLoss, self).__init__(name=name, **kwargs)
+
+    def call(self, y_true, y_pred):
+        y_pred_prob = tf.sigmoid(y_pred)
+        loss = tf.reduce_mean(
+            tf.math.multiply(tf.math.multiply(y_true, self.pscore), tf.math.log(y_pred_prob)) +\
+            y_true * (1 - 1 / self.pscore) * tf.math.log(1 - y_pred_prob) +\
+            (1 - y_true) * tf.math.log(1 - y_pred_prob)
+        )
+        return loss
+
+
+class RelMF(AbstractMF):
+    def __init__(self, data, num_users, num_items, dim, **kwargs):
+        """ RelMF model.
+
+        Args:
+            data ([ndarray]): matrix whose columns are [user_id, item_id, rating, mask, pscore].
+            num_users ([int]): num of users.
+            num_items ([int]): num of items.
+            dim ([int]): a dim of latent space.
+        """
+
+        self. mask = data[:, 3]
+        self. pscore = data[:, 4]
+        super(RelMF, self).__init__(data, num_users, num_items, dim, **kwargs)
+
+    def fit(self, max_iter=10, lr=1.0e-4, n_batch=256, verbose=False, verbose_freq=50):
+        """ This is a function to run training.
+
+        Args:
+            max_iter (int, optional): max iteration. Defaults to 10.
+            lr (float, optional): learning rate. Defaults to 1.0e-4.
+            n_batch (int, optional): batch size. Defaults to 256.
+            verbose (bool, optional): whether displaying loss or not. Defaults to False.
+            verbose_freq (int, optional): frequency of displaying loss. Defaults to 50.
+        """
+        optimizer = tf.optimizers.Adam(lr)
+        train_loss = tf.keras.metrics.Mean()
+
+        @tf.function
+        def train_step(users, items, ratings, pscore):
+            loss_func = RelLoss(pscore)
+            with tf.GradientTape() as tape:
+                r_hats = self.PointwiseMF(users, items)
+                loss = loss_func(ratings, r_hats)
+            grad = tape.gradient(loss, sources=self.PointwiseMF.trainable_variables)
+            optimizer.apply_gradients(zip(grad, self.PointwiseMF.trainable_variables))
+            train_loss.update_state(loss)
+            return None
+
+        for i in range(max_iter):
+            indices = np.random.choice(np.arange(self.num_dsample), n_batch)
+            users = self.users[indices].astype(int)
+            items = self.items[indices].astype(int)
+            ratings = self.ratings[indices]
+            pscore = self.pscore[indices]
+            train_step(users, items, ratings, pscore)
+            if verbose and (i % verbose_freq == 0):
+                print(f"iter {i} loss : {train_loss.result().numpy()}")
+
+        print(f"iter {i} loss : {train_loss.result().numpy()}")
