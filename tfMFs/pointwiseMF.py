@@ -55,7 +55,22 @@ class PointwiseMF(tf.keras.layers.Layer):
             self.u_embed = tf.nn.embedding_lookup(self.user_embeddings, users)
             self.i_embed = tf.nn.embedding_lookup(self.item_embeddings, items)
             self.r_hats = tf.reduce_sum(tf.matmul(self.u_embed, tf.transpose(self.i_embed)), 1)
-            return self.r_hats
+            return self.u_embed, self.i_embed, self.r_hats
+
+    def predict(self, users, items):
+        """ This is a function that precit rating from user_id amd item_id
+
+        Args:
+            users (ndarray): array of user_id
+            items (ndarray): array of itemid
+
+        Returns:
+            r_hats : a estimated values of rating (or relevance)
+        """
+        u_embed = tf.nn.embedding_lookup(self.user_embeddings, users)
+        i_embed = tf.nn.embedding_lookup(self.item_embeddings, items)
+        r_hats = tf.reduce_sum(tf.matmul(u_embed, tf.transpose(i_embed)), 1)
+        return r_hats
 
     def get_user_embeddings(self, users):
         """ This is a function that returns user embeddings
@@ -83,7 +98,7 @@ class PointwiseMF(tf.keras.layers.Layer):
 
 
 class AbstractMF(tf.keras.Model):
-    def __init__(self, data, num_users, num_items, dim, **kwargs):
+    def __init__(self, data, num_users, num_items, dim, lam=1, **kwargs):
         """ Simplest matrix factorization model. This is a abstract class.
             You can build a MF model by inheritance of this class.
 
@@ -98,6 +113,8 @@ class AbstractMF(tf.keras.Model):
         self.num_items = num_items
         self.num_dsample = data.shape[0]
         self.dim = dim
+        self.lam = lam
+
         self.users = data[:, 0]
         self.items = data[:, 1]
         self.ratings = data[:, 2]
@@ -152,8 +169,12 @@ class AbstractMF(tf.keras.Model):
     def fit(self):
         pass
 
-    def transform_prob(self, users, items):
-        r_hats = self.PointwiseMF(users, items)
+    def predict(self, users, items):
+        r_hats = self.PointwiseMF.predict(users, items)
+        return r_hats.numpy()
+
+    def predict_proba(self, users, items):
+        r_hats = self.predict(users, items)
         r_hats_prob = tf.math.sigmoid(r_hats)
         return r_hats_prob.numpy()
 
@@ -167,7 +188,7 @@ class AbstractMF(tf.keras.Model):
         users = np.arange(self.num_users)
         return self.PointwiseMF.get_user_embeddings(users)
 
-    def get_item_embeddings_all(self, items):
+    def get_item_embeddings_all(self):
         items = np.arange(self.num_items)
         return self.PointwiseMF.get_item_embeddigns(items)
 
@@ -182,7 +203,16 @@ class BinaryMF(AbstractMF):
             num_items ([int]): num of items.
             dim ([int]): a dim of latent space.
         """
+        self.bce = tf.keras.losses.BinaryCrossentropy()
         super(BinaryMF, self).__init__(data, num_users, num_items, dim, **kwargs)
+
+    @tf.function
+    def loss(self, u_embed, i_embed, ratings, r_hats):
+        cross_entropy = self.bce(ratings, tf.math.sigmoid(r_hats))
+        norm_u = tf.math.reduce_euclidean_norm(u_embed)
+        norm_i = tf.math.reduce_euclidean_norm(i_embed)
+        loss = cross_entropy + self.lam * (norm_u + norm_i)
+        return loss
 
     def fit(self, max_iter=10, lr=1.0e-4, n_batch=256, verbose=False, verbose_freq=50):
         """ This is a function to run training.
@@ -196,13 +226,12 @@ class BinaryMF(AbstractMF):
         """
         optimizer = tf.optimizers.Adam(lr)
         train_loss = tf.keras.metrics.Mean()
-        bce = tf.keras.losses.BinaryCrossentropy()
 
-        @tf.function
         def train_step(users, items, ratings):
             with tf.GradientTape() as tape:
-                r_hats = self.PointwiseMF(users, items)
-                loss = bce(ratings, tf.math.sigmoid(r_hats))
+                u_embed, i_embed, r_hats = self.PointwiseMF(users, items)
+                loss = self.loss(u_embed, i_embed, ratings, r_hats)
+
             grad = tape.gradient(loss, sources=self.PointwiseMF.trainable_variables)
             optimizer.apply_gradients(zip(grad, self.PointwiseMF.trainable_variables))
             train_loss.update_state(loss)
@@ -220,21 +249,6 @@ class BinaryMF(AbstractMF):
         print(f"iter {i} loss : {train_loss.result().numpy()}")
 
 
-class RelLoss(tf.keras.losses.Loss):
-    def __init__(self, pscore, name="rel_loss", **kwargs):
-        self.pscore = tf.convert_to_tensor(pscore, dtype=tf.float32)
-        super(RelLoss, self).__init__(name=name, **kwargs)
-
-    def call(self, y_true, y_pred):
-        y_pred_prob = tf.sigmoid(y_pred)
-        loss = tf.reduce_mean(
-            tf.math.multiply(tf.math.multiply(y_true, self.pscore), tf.math.log(y_pred_prob)) +\
-            y_true * (1 - 1 / self.pscore) * tf.math.log(1 - y_pred_prob) +\
-            (1 - y_true) * tf.math.log(1 - y_pred_prob)
-        )
-        return loss
-
-
 class RelMF(AbstractMF):
     def __init__(self, data, num_users, num_items, dim, **kwargs):
         """ RelMF model.
@@ -246,9 +260,34 @@ class RelMF(AbstractMF):
             dim ([int]): a dim of latent space.
         """
 
-        self. mask = data[:, 3]
-        self. pscore = data[:, 4]
+        self.mask = data[:, 3]
+        self.pscore = data[:, 4]
         super(RelMF, self).__init__(data, num_users, num_items, dim, **kwargs)
+
+    @tf.function
+    def loss(self, ratings, u_embed, i_embed, r_hats, pscore):
+        """ This is a function calcurating loss.
+        Note that it use a below formula.
+        - y log(sigmoid(x)) = y log (1 + exp(-x))
+
+        Args:
+            y_true (ndarray): binary label
+            y_pred (ndarray): predicted relevance
+            pscore (ndarray): propensity score
+
+        Returns:
+            loss (int): loss
+        """
+        pscore = tf.cast(pscore, tf.float32)
+        y_true = tf.cast(ratings, tf.float32)
+        loss = tf.reduce_mean(
+            y_true * (1 / pscore) * tf.math.softplus(- r_hats) +
+            y_true * (1 - 1 / pscore) * tf.math.softplus(r_hats) +
+            (1 - y_true) * tf.math.softplus(r_hats)
+        )
+        norm = tf.math.reduce_euclidean_norm(u_embed) + tf.math.reduce_euclidean_norm(i_embed)
+
+        return loss + self.lam * norm
 
     def fit(self, max_iter=10, lr=1.0e-4, n_batch=256, verbose=False, verbose_freq=50):
         """ This is a function to run training.
@@ -263,12 +302,10 @@ class RelMF(AbstractMF):
         optimizer = tf.optimizers.Adam(lr)
         train_loss = tf.keras.metrics.Mean()
 
-        @tf.function
         def train_step(users, items, ratings, pscore):
-            loss_func = RelLoss(pscore)
             with tf.GradientTape() as tape:
-                r_hats = self.PointwiseMF(users, items)
-                loss = loss_func(ratings, r_hats)
+                u_embed, i_embed, r_hats = self.PointwiseMF(users, items)
+                loss = self.loss(ratings, u_embed, i_embed, r_hats, pscore)
             grad = tape.gradient(loss, sources=self.PointwiseMF.trainable_variables)
             optimizer.apply_gradients(zip(grad, self.PointwiseMF.trainable_variables))
             train_loss.update_state(loss)
