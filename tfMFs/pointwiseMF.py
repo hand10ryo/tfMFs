@@ -54,7 +54,7 @@ class PointwiseMF(tf.keras.layers.Layer):
         with tf.name_scope('pointwise'):
             self.u_embed = tf.nn.embedding_lookup(self.user_embeddings, users)
             self.i_embed = tf.nn.embedding_lookup(self.item_embeddings, items)
-            self.r_hats = tf.reduce_sum(tf.matmul(self.u_embed, tf.transpose(self.i_embed)), 1)
+            self.r_hats = tf.reduce_sum(self.u_embed * self.i_embed, 1)
             return self.u_embed, self.i_embed, self.r_hats
 
     def predict(self, users, items):
@@ -69,7 +69,7 @@ class PointwiseMF(tf.keras.layers.Layer):
         """
         u_embed = tf.nn.embedding_lookup(self.user_embeddings, users)
         i_embed = tf.nn.embedding_lookup(self.item_embeddings, items)
-        r_hats = tf.reduce_sum(tf.matmul(u_embed, tf.transpose(i_embed)), 1)
+        r_hats = tf.reduce_sum(u_embed * i_embed, 1)
         return r_hats
 
     def get_user_embeddings(self, users):
@@ -111,7 +111,7 @@ class AbstractMF(tf.keras.Model):
         super(AbstractMF, self).__init__(**kwargs)
         self.num_users = num_users
         self.num_items = num_items
-        self.num_dsample = data.shape[0]
+        self.num_sample = data.shape[0]
         self.dim = dim
         self.lam = lam
 
@@ -190,7 +190,7 @@ class AbstractMF(tf.keras.Model):
 
     def get_item_embeddings_all(self):
         items = np.arange(self.num_items)
-        return self.PointwiseMF.get_item_embeddigns(items)
+        return self.PointwiseMF.get_item_embeddings(items)
 
 
 class BinaryMF(AbstractMF):
@@ -238,7 +238,65 @@ class BinaryMF(AbstractMF):
             return None
 
         for i in range(max_iter):
-            indices = np.random.choice(np.arange(self.num_dsample), n_batch)
+            indices = np.random.choice(np.arange(self.num_sample), n_batch)
+            users = self.users[indices].astype(int)
+            items = self.items[indices].astype(int)
+            ratings = self.ratings[indices]
+            train_step(users, items, ratings)
+            if verbose and (i % verbose_freq == 0):
+                print(f"iter {i} loss : {train_loss.result().numpy()}")
+
+        print(f"iter {i} loss : {train_loss.result().numpy()}")
+
+
+class BregmanMF(AbstractMF):
+    def __init__(self, data, num_users, num_items, dim, link=lambda x: x ** 2 / 2, **kwargs):
+        """Simplest matrix factorization model using bregman divergence at loss function.
+        Simplest binary matrix factorization model.
+
+        Args:
+            data (ndarray): matrix whose columns are [user_id, item_id, rating].
+            num_users (int): num of users/
+            num_items (int): num of items.
+            dim (int): a dim of latent space.
+            link (function, optional): [description]. Defaults to lambdax:x**2/2.
+        """
+        self.link = link
+        super(BregmanMF, self).__init__(data, num_users, num_items, dim, **kwargs)
+
+    @tf.function
+    def loss(self, u_embed, i_embed, ratings, r_hats):
+        bregman = self.link(r_hats) - ratings * r_hats
+        norm_u = tf.math.reduce_euclidean_norm(u_embed)
+        norm_i = tf.math.reduce_euclidean_norm(i_embed)
+        loss = bregman + self.lam * (norm_u + norm_i)
+        return loss
+
+    def fit(self, max_iter=10, lr=1.0e-4, n_batch=256, verbose=False, verbose_freq=50):
+        """ This is a function to run training.
+
+        Args:
+            max_iter (int, optional): max iteration. Defaults to 10.
+            lr (float, optional): learning rate. Defaults to 1.0e-4.
+            n_batch (int, optional): batch size. Defaults to 256.
+            verbose (bool, optional): whether displaying loss or not. Defaults to False.
+            verbose_freq (int, optional): frequency of displaying loss. Defaults to 50.
+        """
+        optimizer = tf.optimizers.Adam(lr)
+        train_loss = tf.keras.metrics.Mean()
+
+        def train_step(users, items, ratings):
+            with tf.GradientTape() as tape:
+                u_embed, i_embed, r_hats = self.PointwiseMF(users, items)
+                loss = self.loss(u_embed, i_embed, ratings, r_hats)
+
+            grad = tape.gradient(loss, sources=self.PointwiseMF.trainable_variables)
+            optimizer.apply_gradients(zip(grad, self.PointwiseMF.trainable_variables))
+            train_loss.update_state(loss)
+            return None
+
+        for i in range(max_iter):
+            indices = np.random.choice(np.arange(self.num_sample), n_batch)
             users = self.users[indices].astype(int)
             items = self.items[indices].astype(int)
             ratings = self.ratings[indices]
@@ -251,18 +309,19 @@ class BinaryMF(AbstractMF):
 
 class RelMF(AbstractMF):
     def __init__(self, data, num_users, num_items, dim, **kwargs):
-        """ RelMF model.
+        """ This is a class of RelMF model.
 
         Args:
-            data ([ndarray]): matrix whose columns are [user_id, item_id, rating, mask, pscore].
-            num_users ([int]): num of users.
-            num_items ([int]): num of items.
-            dim ([int]): a dim of latent space.
+            data (ndarray): matrix whose columns are [user_id, item_id, rating, mask, pscore].
+            num_users (int): num of users.
+            num_items (int): num of items.
+            dim (int): a dim of latent space.
         """
-
         self.mask = data[:, 3]
         self.pscore = data[:, 4]
-        super(RelMF, self).__init__(data, num_users, num_items, dim, **kwargs)
+        self.data = np.r_[data[self.mask == 1], data[self.mask == 0]]
+        self.n_labeled = self.mask.sum()
+        super(RelMF, self).__init__(self.data, num_users, num_items, dim, **kwargs)
 
     @tf.function
     def loss(self, ratings, u_embed, i_embed, r_hats, pscore):
@@ -281,9 +340,8 @@ class RelMF(AbstractMF):
         pscore = tf.cast(pscore, tf.float32)
         y_true = tf.cast(ratings, tf.float32)
         loss = tf.reduce_mean(
-            y_true * (1 / pscore) * tf.math.softplus(- r_hats) +
-            y_true * (1 - 1 / pscore) * tf.math.softplus(r_hats) +
-            (1 - y_true) * tf.math.softplus(r_hats)
+            (y_true / pscore) * tf.math.softplus(- r_hats) +
+            (1 - y_true / pscore) * tf.math.softplus(r_hats)
         )
         norm = tf.math.reduce_euclidean_norm(u_embed) + tf.math.reduce_euclidean_norm(i_embed)
 
@@ -312,7 +370,9 @@ class RelMF(AbstractMF):
             return None
 
         for i in range(max_iter):
-            indices = np.random.choice(np.arange(self.num_dsample), n_batch)
+            labeled_indices = np.random.choice(np.arange(self.n_labeled), int(n_batch / 2))
+            unlabeled_indices = np.random.choice(np.arange(self.n_labeled, self.num_sample), int(n_batch / 2))
+            indices = np.r_[labeled_indices, unlabeled_indices].astype(int)
             users = self.users[indices].astype(int)
             items = self.items[indices].astype(int)
             ratings = self.ratings[indices]
