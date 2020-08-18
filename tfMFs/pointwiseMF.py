@@ -503,6 +503,87 @@ class RelMF(AbstractMF):
         print(f"iter {i} loss : {train_loss.result().numpy()}")
 
 
+class ConfidenceRelMF(AbstractMF):
+    def __init__(self, data, num_users, num_items, dim, **kwargs):
+        """ This is a class of RelMF model.
+
+        Args:
+            data (ndarray): matrix whose columns are [user_id, item_id, rating, mask, pscore].
+            num_users (int): num of users.
+            num_items (int): num of items.
+            dim (int): a dim of latent space.
+        """
+        self.mask = data[:, 3]
+        self.pscore = data[:, 4]
+        self.data = np.r_[data[self.mask == 1], data[self.mask == 0]]
+        self.n_labeled = self.mask.sum()
+        super(ConfidenceRelMF, self).__init__(self.data, num_users, num_items, dim, **kwargs)
+
+    @tf.function
+    def loss(self, ratings, u_embed, i_embed, r_hats, pscore):
+        """ This is a function calcurating loss.
+        Note that it use a below formula.
+        - y log(sigmoid(x)) = y log (1 + exp(-x))
+
+        Args:
+            y_true (ndarray): binary label
+            y_pred (ndarray): predicted relevance
+            pscore (ndarray): propensity score
+
+        Returns:
+            loss (int): loss
+        """
+        pscore = tf.cast(pscore, tf.float32)
+        y_true = tf.cast(ratings, tf.float32)
+        loss = tf.reduce_mean(
+            y_true * (1 / pscore) * tf.math.softplus(- r_hats) +
+            y_true * (1 - 1 / pscore) * tf.math.softplus(r_hats) +
+            (1 - y_true) * (
+                (0.5 + pscore / 2) * tf.math.softplus(r_hats) +
+                (0.5 - pscore / 2) * tf.math.softplus(- r_hats)
+            )
+        )
+        norm = tf.math.reduce_euclidean_norm(u_embed) + tf.math.reduce_euclidean_norm(i_embed)
+
+        return loss + self.lam * norm
+
+    def fit(self, max_iter=10, lr=1.0e-4, n_batch=256, verbose=False, verbose_freq=50):
+        """ This is a function to run training.
+
+        Args:
+            max_iter (int, optional): max iteration. Defaults to 10.
+            lr (float, optional): learning rate. Defaults to 1.0e-4.
+            n_batch (int, optional): batch size. Defaults to 256.
+            verbose (bool, optional): whether displaying loss or not. Defaults to False.
+            verbose_freq (int, optional): frequency of displaying loss. Defaults to 50.
+        """
+        optimizer = tf.optimizers.Adam(lr)
+        train_loss = tf.keras.metrics.Mean()
+
+        def train_step(users, items, ratings, pscore):
+            with tf.GradientTape() as tape:
+                u_embed, i_embed, r_hats = self.PointwiseMF(users, items)
+                loss = self.loss(ratings, u_embed, i_embed, r_hats, pscore)
+            grad = tape.gradient(loss, sources=self.PointwiseMF.trainable_variables)
+            optimizer.apply_gradients(zip(grad, self.PointwiseMF.trainable_variables))
+            train_loss.update_state(loss)
+            return None
+
+        for i in range(max_iter):
+            labeled_indices = np.random.choice(np.arange(self.n_labeled), int(n_batch / 2))
+            unlabeled_indices = np.random.choice(np.arange(self.n_labeled, self.num_sample), int(n_batch / 2))
+            indices = np.r_[labeled_indices, unlabeled_indices].astype(int)
+            users = self.users[indices].astype(int)
+            items = self.items[indices].astype(int)
+            ratings = self.ratings[indices]
+            pscore = self.pscore[indices]
+            train_step(users, items, ratings, pscore)
+            if verbose and (i % verbose_freq == 0):
+                print(f"iter {i} loss : {train_loss.result().numpy()}")
+
+        print(f"iter {i} loss : {train_loss.result().numpy()}")
+
+
 class RelCMF(AbstractMF):
     def __init__(self, data, num_users, num_items, num_groups, dim, alpha=0.7, **kwargs):
         """ This is a class of RelCMF model.
@@ -548,7 +629,7 @@ class RelCMF(AbstractMF):
             i_embed (tensor): item embedding (shape = [n_batch, dim])
             g_embed (tensor): group embedding (shape = [n_groups, dim])
             r_hats (ndarray): predicted relevance
-            groups (ndarray): group label
+            groups (ndarray): group label (shape = [n_batch, n_groups])
             pscore (ndarray): propensity score
         Returns:
             loss (int): loss
@@ -557,28 +638,36 @@ class RelCMF(AbstractMF):
         groups = tf.cast(groups.A, tf.float32)
         pscore = tf.cast(pscore, tf.float32)
 
-        # RelMF
-        loss_point = tf.reduce_mean(
-            (y_true / pscore) * tf.math.softplus(- r_hats) +
-            (1 - y_true / pscore) * tf.math.softplus(r_hats)
-        )
         # Additional loss
         # Avoiding divergence by
-        # log{ exp(x1) / (exp(x1) + exp(x2) + exp(x3)) } = x1 - log((exp(x1) + exp(x2) + exp(x3))
+        # - log{ 1 / (1 + exp(-x)) } = log(1 + exp(-x))
         g_hats = tf.matmul(i_embed, tf.transpose(g_embed))
         group_cross_entoropy = tf.reduce_mean(
             groups * tf.math.softplus(- g_hats) +
             (1 - groups) * tf.math.softplus(g_hats), 1
         )
+        g_norm = tf.reduce_sum(tf.matmul(groups, g_embed) ** 2, 1)
+        
+        # RelMF
+        loss_point = tf.reduce_mean(
+            y_true * (1 / pscore) * tf.math.softplus(- r_hats) +
+            y_true * (1 - 1 / pscore) * tf.math.softplus(r_hats) +
+            (1 - y_true) * (
+                pscore * tf.math.softplus(r_hats) +
+                self.alpha * (group_cross_entoropy + self.lam * g_norm)
+            )
+        )
+    
+        # ↓ Multiclass Cross Entropy ↓
         # g_logsumexp = tf.reduce_logsumexp(g_hats, 1)
         # g_labeled_sum = tf.reduce_sum(groups * g_hats, 1)
-        # g_norm = tf.math.reduce_euclidean_norm(g_embed)
         # group_cross_entoropy = g_logsumexp - g_labeled_sum + self.lam * g_norm
-        loss_group = tf.reduce_mean((1 - y_true) / pscore * group_cross_entoropy)
+        # loss_group = tf.reduce_mean((1 - y_true) / pscore * group_cross_entoropy)
 
         norm = tf.math.reduce_euclidean_norm(u_embed) + tf.math.reduce_euclidean_norm(i_embed)
 
-        loss = self.alpha * loss_point + (1 - self.alpha) * loss_group + self.lam * norm
+        # loss = self.alpha * loss_point + (1 - self.alpha) * loss_group + self.lam * norm
+        loss = loss_point + self.lam * norm
         return loss
 
     def fit(self, max_iter=10, lr=1.0e-4, n_batch=256, verbose=False, verbose_freq=50):
