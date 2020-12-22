@@ -1,6 +1,7 @@
 import numpy as np
 import tensorflow as tf
 from sklearn.utils.extmath import randomized_svd
+from tqdm import tqdm
 
 
 class tfCMF:
@@ -146,7 +147,7 @@ class tfCMF:
         train_loss_record = []
         test_loss_record = []
 
-        for times in range(optim_steps):
+        for times in tqdm(range(optim_steps)):
             loss_train = loss(R=R_train, M=M_train).numpy()
             loss_test = loss(R=R_test, M=M_test).numpy()
             train_loss_record.append(loss_train)
@@ -154,8 +155,7 @@ class tfCMF:
 
             if loss_test > old_loss:
                 if stop_time == early_stopping:
-                    print(
-                        "[Info] At last time-step {}, valid data loss is {}".format(times, loss_test))
+                    # print("[Info] At last time-step {}, valid data loss is {}".format(times, loss_test))
                     break
                 else:
                     stop_time += 1
@@ -163,10 +163,9 @@ class tfCMF:
                 stop_time = 0
 
             old_loss = loss_test
-            if verbose > 0:
-                if times % verbose == 0:
-                    print(
-                        "[Info] At time-step {}, valid data loss is {}".format(times, loss_test))
+            # if verbose > 0:
+            # if times % verbose == 0:
+            # print("[Info] At time-step {}, valid data loss is {}".format(times, loss_test))
 
             opt.minimize(loss=loss, var_list=[U, V, Z])
 
