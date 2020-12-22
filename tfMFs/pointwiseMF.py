@@ -8,6 +8,7 @@ from sklearn.preprocessing import OneHotEncoder
 class PointwiseMF(tf.keras.layers.Layer):
     """ This class is Custom Layer for PointwiseMF
     """
+
     def __init__(self, num_users, num_items, dim, U_init, V_init, **kwargs):
         """ initialize layer
 
@@ -101,6 +102,7 @@ class PointwiseMF(tf.keras.layers.Layer):
 class PointwiseCMF(tf.keras.layers.Layer):
     """ This class is Custom Layer for PointwiseCMF
     """
+
     def __init__(self, num_users, num_items, num_groups, dim, U_init, V_init, Z_init, **kwargs):
         """ initialize layer
 
@@ -237,9 +239,11 @@ class AbstractMF(tf.keras.Model):
         self._build_Laryer()
 
     def _build_Laryer(self):
-        self.R = csr_matrix((self.ratings, (self.users, self.items)), shape=(self.num_users, self.num_items))
+        self.R = csr_matrix((self.ratings, (self.users, self.items)), shape=(
+            self.num_users, self.num_items))
         self.U_init, self.V_init = self.svd_init(self.R, self.dim)
-        self.PointwiseMF = PointwiseMF(self.num_users, self.num_items, self.dim, self.U_init, self.V_init.T)
+        self.PointwiseMF = PointwiseMF(
+            self.num_users, self.num_items, self.dim, self.U_init, self.V_init.T)
 
     def svd_init(self, M, dim):
         """ A function to intialize user and item embeddings by SVD.
@@ -322,7 +326,8 @@ class BinaryMF(AbstractMF):
             dim ([int]): a dim of latent space.
         """
         self.bce = tf.keras.losses.BinaryCrossentropy()
-        super(BinaryMF, self).__init__(data, num_users, num_items, dim, **kwargs)
+        super(BinaryMF, self).__init__(
+            data, num_users, num_items, dim, **kwargs)
 
     @tf.function
     def loss(self, u_embed, i_embed, ratings, r_hats):
@@ -350,8 +355,10 @@ class BinaryMF(AbstractMF):
                 u_embed, i_embed, r_hats = self.PointwiseMF(users, items)
                 loss = self.loss(u_embed, i_embed, ratings, r_hats)
 
-            grad = tape.gradient(loss, sources=self.PointwiseMF.trainable_variables)
-            optimizer.apply_gradients(zip(grad, self.PointwiseMF.trainable_variables))
+            grad = tape.gradient(
+                loss, sources=self.PointwiseMF.trainable_variables)
+            optimizer.apply_gradients(
+                zip(grad, self.PointwiseMF.trainable_variables))
             train_loss.update_state(loss)
             return None
 
@@ -380,7 +387,8 @@ class BregmanMF(AbstractMF):
             link (function, optional): [description]. Defaults to lambdax:x**2/2.
         """
         self.link = link
-        super(BregmanMF, self).__init__(data, num_users, num_items, dim, **kwargs)
+        super(BregmanMF, self).__init__(
+            data, num_users, num_items, dim, **kwargs)
 
     @tf.function
     def loss(self, u_embed, i_embed, ratings, r_hats):
@@ -409,8 +417,10 @@ class BregmanMF(AbstractMF):
                 u_embed, i_embed, r_hats = self.PointwiseMF(users, items)
                 loss = self.loss(u_embed, i_embed, ratings, r_hats)
 
-            grad = tape.gradient(loss, sources=self.PointwiseMF.trainable_variables)
-            optimizer.apply_gradients(zip(grad, self.PointwiseMF.trainable_variables))
+            grad = tape.gradient(
+                loss, sources=self.PointwiseMF.trainable_variables)
+            optimizer.apply_gradients(
+                zip(grad, self.PointwiseMF.trainable_variables))
             train_loss.update_state(loss)
             return None
 
@@ -440,7 +450,8 @@ class RelMF(AbstractMF):
         self.pscore = data[:, 4]
         self.data = np.r_[data[self.mask == 1], data[self.mask == 0]]
         self.n_labeled = self.mask.sum()
-        super(RelMF, self).__init__(self.data, num_users, num_items, dim, **kwargs)
+        super(RelMF, self).__init__(
+            self.data, num_users, num_items, dim, **kwargs)
 
     @tf.function
     def loss(self, ratings, u_embed, i_embed, r_hats, pscore):
@@ -462,7 +473,8 @@ class RelMF(AbstractMF):
             (y_true / pscore) * tf.math.softplus(- r_hats) +
             (1 - y_true / pscore) * tf.math.softplus(r_hats)
         )
-        norm = tf.math.reduce_euclidean_norm(u_embed) + tf.math.reduce_euclidean_norm(i_embed)
+        norm = tf.math.reduce_euclidean_norm(
+            u_embed) + tf.math.reduce_euclidean_norm(i_embed)
 
         return loss + self.lam * norm
 
@@ -483,14 +495,18 @@ class RelMF(AbstractMF):
             with tf.GradientTape() as tape:
                 u_embed, i_embed, r_hats = self.PointwiseMF(users, items)
                 loss = self.loss(ratings, u_embed, i_embed, r_hats, pscore)
-            grad = tape.gradient(loss, sources=self.PointwiseMF.trainable_variables)
-            optimizer.apply_gradients(zip(grad, self.PointwiseMF.trainable_variables))
+            grad = tape.gradient(
+                loss, sources=self.PointwiseMF.trainable_variables)
+            optimizer.apply_gradients(
+                zip(grad, self.PointwiseMF.trainable_variables))
             train_loss.update_state(loss)
             return None
 
         for i in range(max_iter):
-            labeled_indices = np.random.choice(np.arange(self.n_labeled), int(n_batch / 2))
-            unlabeled_indices = np.random.choice(np.arange(self.n_labeled, self.num_sample), int(n_batch / 2))
+            labeled_indices = np.random.choice(
+                np.arange(self.n_labeled), int(n_batch / 2))
+            unlabeled_indices = np.random.choice(
+                np.arange(self.n_labeled, self.num_sample), int(n_batch / 2))
             indices = np.r_[labeled_indices, unlabeled_indices].astype(int)
             users = self.users[indices].astype(int)
             items = self.items[indices].astype(int)
@@ -517,7 +533,8 @@ class ConfidenceRelMF(AbstractMF):
         self.pscore = data[:, 4]
         self.data = np.r_[data[self.mask == 1], data[self.mask == 0]]
         self.n_labeled = self.mask.sum()
-        super(ConfidenceRelMF, self).__init__(self.data, num_users, num_items, dim, **kwargs)
+        super(ConfidenceRelMF, self).__init__(
+            self.data, num_users, num_items, dim, **kwargs)
 
     @tf.function
     def loss(self, ratings, u_embed, i_embed, r_hats, pscore):
@@ -543,7 +560,8 @@ class ConfidenceRelMF(AbstractMF):
                 (0.5 - pscore / 2) * tf.math.softplus(- r_hats)
             )
         )
-        norm = tf.math.reduce_euclidean_norm(u_embed) + tf.math.reduce_euclidean_norm(i_embed)
+        norm = tf.math.reduce_euclidean_norm(
+            u_embed) + tf.math.reduce_euclidean_norm(i_embed)
 
         return loss + self.lam * norm
 
@@ -564,14 +582,18 @@ class ConfidenceRelMF(AbstractMF):
             with tf.GradientTape() as tape:
                 u_embed, i_embed, r_hats = self.PointwiseMF(users, items)
                 loss = self.loss(ratings, u_embed, i_embed, r_hats, pscore)
-            grad = tape.gradient(loss, sources=self.PointwiseMF.trainable_variables)
-            optimizer.apply_gradients(zip(grad, self.PointwiseMF.trainable_variables))
+            grad = tape.gradient(
+                loss, sources=self.PointwiseMF.trainable_variables)
+            optimizer.apply_gradients(
+                zip(grad, self.PointwiseMF.trainable_variables))
             train_loss.update_state(loss)
             return None
 
         for i in range(max_iter):
-            labeled_indices = np.random.choice(np.arange(self.n_labeled), int(n_batch / 2))
-            unlabeled_indices = np.random.choice(np.arange(self.n_labeled, self.num_sample), int(n_batch / 2))
+            labeled_indices = np.random.choice(
+                np.arange(self.n_labeled), int(n_batch / 2))
+            unlabeled_indices = np.random.choice(
+                np.arange(self.n_labeled, self.num_sample), int(n_batch / 2))
             indices = np.r_[labeled_indices, unlabeled_indices].astype(int)
             users = self.users[indices].astype(int)
             items = self.items[indices].astype(int)
@@ -604,14 +626,18 @@ class RelCMF(AbstractMF):
         ohe = OneHotEncoder()
         self.groups = ohe.fit_transform(self.group_id[:, np.newaxis])
 
-        super(RelCMF, self).__init__(self.data, num_users, num_items, dim, **kwargs)
+        super(RelCMF, self).__init__(
+            self.data, num_users, num_items, dim, **kwargs)
 
     def _build_Laryer(self):
-        self.R = csr_matrix((self.ratings, (self.users, self.items)), shape=(self.num_users, self.num_items))
-        self.X = csr_matrix((np.ones(self.data.shape[0]), (self.group_id, self.items)), shape=(self.num_groups, self.num_items))
+        self.R = csr_matrix((self.ratings, (self.users, self.items)), shape=(
+            self.num_users, self.num_items))
+        self.X = csr_matrix((np.ones(self.data.shape[0]), (self.group_id, self.items)), shape=(
+            self.num_groups, self.num_items))
         self.U_init, self.V_init = self.svd_init(self.R, self.dim)
         initializer = tf.initializers.GlorotUniform()
-        self.Z_init = tf.constant(initializer(shape=[self.num_groups, self.dim])).numpy()
+        self.Z_init = tf.constant(initializer(
+            shape=[self.num_groups, self.dim])).numpy()
         self.PointwiseMF = PointwiseCMF(  # * Member name is Pointwise"MF" (not Pointwise"C"MF)
             self.num_users, self.num_items, self.num_groups, self.dim,
             self.U_init, self.V_init.T, self.Z_init
@@ -647,7 +673,7 @@ class RelCMF(AbstractMF):
             (1 - groups) * tf.math.softplus(g_hats), 1
         )
         g_norm = tf.reduce_sum(tf.matmul(groups, g_embed) ** 2, 1)
-        
+
         # RelMF
         loss_point = tf.reduce_mean(
             y_true * (1 / pscore) * tf.math.softplus(- r_hats) +
@@ -657,14 +683,15 @@ class RelCMF(AbstractMF):
                 self.alpha * (group_cross_entoropy + self.lam * g_norm)
             )
         )
-    
+
         # ↓ Multiclass Cross Entropy ↓
         # g_logsumexp = tf.reduce_logsumexp(g_hats, 1)
         # g_labeled_sum = tf.reduce_sum(groups * g_hats, 1)
         # group_cross_entoropy = g_logsumexp - g_labeled_sum + self.lam * g_norm
         # loss_group = tf.reduce_mean((1 - y_true) / pscore * group_cross_entoropy)
 
-        norm = tf.math.reduce_euclidean_norm(u_embed) + tf.math.reduce_euclidean_norm(i_embed)
+        norm = tf.math.reduce_euclidean_norm(
+            u_embed) + tf.math.reduce_euclidean_norm(i_embed)
 
         # loss = self.alpha * loss_point + (1 - self.alpha) * loss_group + self.lam * norm
         loss = loss_point + self.lam * norm
@@ -685,16 +712,22 @@ class RelCMF(AbstractMF):
 
         def train_step(users, items, ratings, pscore, groups):
             with tf.GradientTape() as tape:
-                u_embed, i_embed, g_embed, r_hats = self.PointwiseMF(users, items)
-                loss = self.loss(ratings, u_embed, i_embed, g_embed, r_hats, groups, pscore)
-            grad = tape.gradient(loss, sources=self.PointwiseMF.trainable_variables)
-            optimizer.apply_gradients(zip(grad, self.PointwiseMF.trainable_variables))
+                u_embed, i_embed, g_embed, r_hats = self.PointwiseMF(
+                    users, items)
+                loss = self.loss(ratings, u_embed, i_embed,
+                                 g_embed, r_hats, groups, pscore)
+            grad = tape.gradient(
+                loss, sources=self.PointwiseMF.trainable_variables)
+            optimizer.apply_gradients(
+                zip(grad, self.PointwiseMF.trainable_variables))
             train_loss.update_state(loss)
             return None
 
         for i in range(max_iter):
-            labeled_indices = np.random.choice(np.arange(self.n_labeled), int(n_batch / 2))
-            unlabeled_indices = np.random.choice(np.arange(self.n_labeled, self.num_sample), int(n_batch / 2))
+            labeled_indices = np.random.choice(
+                np.arange(self.n_labeled), int(n_batch / 2))
+            unlabeled_indices = np.random.choice(
+                np.arange(self.n_labeled, self.num_sample), int(n_batch / 2))
             indices = np.r_[labeled_indices, unlabeled_indices].astype(int)
             users = self.users[indices].astype(int)
             items = self.items[indices].astype(int)
@@ -729,15 +762,19 @@ class BinaryCMF(AbstractMF):
         ohe = OneHotEncoder()
         self.groups = ohe.fit_transform(self.group_id[:, np.newaxis])
 
-        super(RelCMF, self).__init__(self.data, num_users, num_items, dim, **kwargs)
+        super(RelCMF, self).__init__(
+            self.data, num_users, num_items, dim, **kwargs)
 
     def _build_Laryer(self):
-        self.R = csr_matrix((self.ratings, (self.users, self.items)), shape=(self.num_users, self.num_items))
-        self.X = csr_matrix((np.ones(self.data.shape[0]), (self.group_id, self.items)), shape=(self.num_groups, self.num_items))
+        self.R = csr_matrix((self.ratings, (self.users, self.items)), shape=(
+            self.num_users, self.num_items))
+        self.X = csr_matrix((np.ones(self.data.shape[0]), (self.group_id, self.items)), shape=(
+            self.num_groups, self.num_items))
         self.U_init, self.V_init_1 = self.svd_init(self.R, self.dim)
         self.V_init = self.V_init_1
         initializer = tf.initializers.GlorotUniform()
-        self.Z_init = tf.constant(initializer(shape=[self.num_groups, self.dim])).numpy()
+        self.Z_init = tf.constant(initializer(
+            shape=[self.num_groups, self.dim])).numpy()
         self.PointwiseMF = PointwiseCMF(  # * Member name is Pointwise"MF" (not Pointwise"C"MF)
             self.num_users, self.num_items, self.num_groups, self.dim,
             self.U_init, self.V_init.T, self.Z_init
@@ -776,7 +813,8 @@ class BinaryCMF(AbstractMF):
             tf.math.reduce_euclidean_norm(i_embed) +\
             (1 - self.alpha) * tf.math.reduce_euclidean_norm(g_embed)
 
-        loss = self.alpha * bregman + (1 - self.alpha) * loss_group + self.lam * norm
+        loss = self.alpha * bregman + \
+            (1 - self.alpha) * loss_group + self.lam * norm
         return loss
 
     def fit(self, max_iter=10, lr=1.0e-4, n_batch=256, verbose=False, verbose_freq=50):
@@ -794,16 +832,22 @@ class BinaryCMF(AbstractMF):
 
         def train_step(users, items, ratings, pscore, groups):
             with tf.GradientTape() as tape:
-                u_embed, i_embed, g_embed, r_hats = self.PointwiseMF(users, items)
-                loss = self.loss(ratings, u_embed, i_embed, g_embed, r_hats, groups, pscore)
-            grad = tape.gradient(loss, sources=self.PointwiseMF.trainable_variables)
-            optimizer.apply_gradients(zip(grad, self.PointwiseMF.trainable_variables))
+                u_embed, i_embed, g_embed, r_hats = self.PointwiseMF(
+                    users, items)
+                loss = self.loss(ratings, u_embed, i_embed,
+                                 g_embed, r_hats, groups, pscore)
+            grad = tape.gradient(
+                loss, sources=self.PointwiseMF.trainable_variables)
+            optimizer.apply_gradients(
+                zip(grad, self.PointwiseMF.trainable_variables))
             train_loss.update_state(loss)
             return None
 
         for i in range(max_iter):
-            labeled_indices = np.random.choice(np.arange(self.n_labeled), int(n_batch / 2))
-            unlabeled_indices = np.random.choice(np.arange(self.n_labeled, self.num_sample), int(n_batch / 2))
+            labeled_indices = np.random.choice(
+                np.arange(self.n_labeled), int(n_batch / 2))
+            unlabeled_indices = np.random.choice(
+                np.arange(self.n_labeled, self.num_sample), int(n_batch / 2))
             indices = np.r_[labeled_indices, unlabeled_indices].astype(int)
             users = self.users[indices].astype(int)
             items = self.items[indices].astype(int)

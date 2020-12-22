@@ -27,11 +27,11 @@ class tfCMF:
         >>> mask_train = np.array([[((i%2 == 0) & (j%2 == 1)) | ((i%2 == 1) & (j%2 == 0)) for i in range(m)]for j in range(n)])
         >>> mask_test = 1 - mask_train
         >>> X = np.random.random([n,d])
-        >>> cmf = tfCMF.tfSingleCMF(
+        >>> cmf = tfCMF.tfCMF(
                 X, alpha=0.7, d_hidden=5, lamda= 1,
                 left=tfCMF.tf.math.softplus, right=lambda x:x**2/2
             )
-        >>> U,V, Z, train_rec, test_rec = cmf.train(
+        >>> U, V, Z, train_rec, test_rec = cmf.train(
                 train_data, test_data,
                 mask_train = mask_train, mask_test = mask_test,
                 optim_steps=100, verbose=10, early_stopping=5,lr=0.005
@@ -74,7 +74,7 @@ class tfCMF:
 
         return U, V, Z
 
-    def train(self, train_data, test_data, mask_train=None, mask_test=None, optim_steps=20000, verbose=100, early_stopping=5, lr=0.005):
+    def train(self, train_data, test_data, mask_train=None, mask_test=None, optim_steps=20000, verbose=100, early_stopping=5, lr=0.005, optimizer="Adam"):
         """[summary]
 
         Args:
@@ -92,7 +92,7 @@ class tfCMF:
             V.numpy() (ndarray): numpy array of V.
             Z.numpy() (ndarray): numpy array of Z.
             train_loss_record (list) : record of train loss.
-            test_loss_record (list): record of test loss.
+            _loss_record (list): record of test loss.
         """
 
         U, V, Z = self.init_matrices(train_data, self.X)
@@ -106,11 +106,17 @@ class tfCMF:
         X = tf.keras.backend.constant(self.X, dtype=tf.float32)
 
         if mask_train is None:
+            M_train = tf.keras.backend.constant(
+                np.ones(train_data.shape).astype(int))
+        elif mask_train == "nonzero":
             M_train = tf.keras.backend.constant((train_data != 0).astype(int))
         else:
             M_train = tf.keras.backend.constant(mask_train)
 
         if mask_test is None:
+            M_test = tf.keras.backend.constant(
+                np.ones(test_data.shape).astype(int))
+        elif mask_test == "nonzero":
             M_test = tf.keras.backend.constant((test_data != 0).astype(int))
         else:
             M_test = tf.keras.backend.constant(mask_test)
@@ -130,7 +136,11 @@ class tfCMF:
 
             return loss_all
 
-        opt = tf.optimizers.Adam(learning_rate=lr)
+        if optimizer == "Adam":
+            opt = tf.optimizers.Adam(learning_rate=lr)
+
+        if optimizer == "SGD":
+            opt = tf.optimizers.SGD(learning_rate=lr)
         stop_time = 0
         times, old_loss = 0, 100000
         train_loss_record = []
@@ -144,7 +154,8 @@ class tfCMF:
 
             if loss_test > old_loss:
                 if stop_time == early_stopping:
-                    print("[Info] At last ime-step {}, test data rmse loss is {}".format(times, loss_test**0.5))
+                    print(
+                        "[Info] At last time-step {}, valid data loss is {}".format(times, loss_test))
                     break
                 else:
                     stop_time += 1
@@ -154,7 +165,8 @@ class tfCMF:
             old_loss = loss_test
             if verbose > 0:
                 if times % verbose == 0:
-                    print("[Info] At time-step {}, test data rmse loss is {}".format(times, loss_test**0.5))
+                    print(
+                        "[Info] At time-step {}, valid data loss is {}".format(times, loss_test))
 
             opt.minimize(loss=loss, var_list=[U, V, Z])
 
